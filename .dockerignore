@@ -1,0 +1,28 @@
+# Build artifacts
+target/
+*.jar
+*.war
+*.ear
+
+# IDE / Editor files
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+*.swp
+*.swo
+
+# Version Control
+.git/
+.gitignore
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Maven wrapper and local settings
+.mvn/
+mvnw
+mvnw.cmd
