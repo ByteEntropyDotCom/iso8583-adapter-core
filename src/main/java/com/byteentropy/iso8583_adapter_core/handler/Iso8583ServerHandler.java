@@ -78,4 +78,16 @@ public class Iso8583ServerHandler extends SimpleChannelInboundHandler<IsoMessage
         frame.writeBytes(data);
         ctx.writeAndFlush(frame);
     }
+
+    @Override
+public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+    if (cause instanceof io.netty.handler.codec.TooLongFrameException) {
+        logger.warn("Invalid frame size received ({}). Closing connection.", cause.getMessage());
+    } else if (cause instanceof io.netty.handler.timeout.ReadTimeoutException) {
+        logger.warn("Connection timed out (Idle).");
+    } else {
+        logger.error("Netty pipeline error: ", cause);
+    }
+    ctx.close(); // Crucial: close the socket to stop the error loop
+}
 }
