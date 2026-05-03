@@ -30,8 +30,12 @@ public class IsoTransactionService {
     }
 
     public String process(IsoMessage msg) {
+
+        boolean isNetworkMsg = msg.mti().startsWith("08");
+        boolean macEnabled = Boolean.parseBoolean(props.getProperty("adapter.security.mac-enabled", "false"));
         // 1. MAC Verification
-        if (Boolean.parseBoolean(props.getProperty("adapter.security.mac-enabled", "false"))) {
+        // FIX: Skip MAC if it's a network message (08xx)
+        if (macEnabled && !isNetworkMsg) {
             if (!verifyInboundMac(msg)) {
                 if (Boolean.parseBoolean(props.getProperty("adapter.security.strict-mode", "true"))) {
                     return props.getProperty("adapter.response.mac-error-code", "A0");

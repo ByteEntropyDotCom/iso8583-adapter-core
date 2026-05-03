@@ -44,13 +44,22 @@ public class Iso8583ServerHandler extends SimpleChannelInboundHandler<IsoMessage
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, IsoMessage msg) {
+        
         Timer.Sample sample = Timer.start(MetricsConfig.registry);
         int timeout = Integer.parseInt(props.getProperty("adapter.timeout.total-threshold-ms", "180"));
+        String systemError = props.getProperty("adapter.response.system-error-code", "96");
 
         CompletableFuture.runAsync(() -> {
-            String responseCode = txService.process(msg);
-            respond(ctx, msg, responseCode);
-            MetricsConfig.txnCounter.increment();
+            try {
+                    String responseCode = txService.process(msg);
+                    respond(ctx, msg, responseCode);
+                    MetricsConfig.txnCounter.increment();
+            } catch (Exception e) {
+                    logger.error("Critical error processing transaction: {}", e.getMessage(), e);
+                    respond(ctx, msg, systemError);
+            }
+
+        
         }, executor)
         .orTimeout(timeout, TimeUnit.MILLISECONDS)
         .exceptionally(ex -> {
