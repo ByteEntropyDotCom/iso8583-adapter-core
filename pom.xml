@@ -15,9 +15,9 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         
         <!-- Netty version compatible with Java 21 -->
-        <netty.version>4.1.100.Final</netty.version>
+        <netty.version>4.1.132.Final</netty.version>
         <slf4j.version>2.0.9</slf4j.version>
-        <logback.version>1.4.11</logback.version>
+        <logback.version>1.4.12</logback.version>
     </properties>
 
     <dependencies>
