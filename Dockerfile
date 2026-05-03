@@ -8,37 +8,32 @@ RUN mvn dependency:go-offline -B
 
 # 2. Build the application
 COPY src ./src
-# Parallel threads (-T 1C) speed up compilation on multi-core systems.
 RUN mvn clean package -DskipTests -T 1C
 
 # --- Stage 2: Runtime Stage ---
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
-# 3. Security & OS Fixes
-# Update package index and upgrade gnutls to resolve CVE-2026-33845
+# 3. Security, OS Fixes & User Setup
+# Consolidating into one RUN command to reduce image layers
 RUN apk update && \
+    apk upgrade && \
     apk add --no-cache gnutls>=3.8.13-r0 && \
-    addgroup -S adaptergroup && adduser -S adapteruser -G adaptergroup
+    addgroup -S adaptergroup && \
+    adduser -S adapteruser -G adaptergroup && \
+    rm -rf /var/cache/apk/*
 
 # 4. Configuration: Copy the ISO Schema
-# The hybrid Registry loader finds this in the working directory
 COPY --chown=adapteruser:adaptergroup src/main/resources/iso-schema.json .
 
-# 5. Application: Copy the compiled JAR from the build stage
-# Note: Using a wildcard to match the versioned JAR and naming it app.jar
+# 5. Application: Copy compiled JAR from build stage
 COPY --from=build --chown=adapteruser:adaptergroup /app/target/iso8583-adapter-core-*.jar app.jar
 
 # 6. Environment & Permissions
 USER adapteruser
-
-# ISO 8583 Engine default port
 EXPOSE 8080
 
-# 7. Execution: ENTRYPOINT with optimized JVM flags for containers
-# - UseContainerSupport: Ensures JVM respects Docker memory limits
-# - MaxRAMPercentage: Allocates 75% of container memory to the JVM heap
-# - ExitOnOutOfMemoryError: Forces container restart on heap exhaustion
+# 7. Execution: Optimized for Containerized Environments
 ENTRYPOINT ["java", \
             "-XX:+UseContainerSupport", \
             "-XX:MaxRAMPercentage=75.0", \

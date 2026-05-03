@@ -48,6 +48,23 @@ public class NettyServerConfig {
         EventLoopGroup bossGroup = new NioEventLoopGroup(1);
         EventLoopGroup workerGroup = new NioEventLoopGroup();
 
+        // FIX: Add graceful shutdown hook to catch SIGTERM (Docker stop / Ctrl+C)
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            logger.info("Shutdown signal received. Gracefully shutting down Netty event loops...");
+            bossGroup.shutdownGracefully();
+            workerGroup.shutdownGracefully();
+            try {
+                if (!bossGroup.awaitTermination(5, TimeUnit.SECONDS)) {
+                    logger.warn("Boss group did not terminate in 5 seconds. Forcing shutdown.");
+                }
+                if (!workerGroup.awaitTermination(5, TimeUnit.SECONDS)) {
+                    logger.warn("Worker group did not terminate in 5 seconds. Forcing shutdown.");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }, "netty-shutdown-hook"));
+
         try {
             ServerBootstrap b = new ServerBootstrap();
             b.group(bossGroup, workerGroup)
@@ -75,6 +92,7 @@ public class NettyServerConfig {
             logger.info("ISO 8583 Adapter Engine listening on port {}", port);
             f.channel().closeFuture().sync();
         } finally {
+            // Standard fallback cleanup if the block exits naturally
             bossGroup.shutdownGracefully();
             workerGroup.shutdownGracefully();
         }
