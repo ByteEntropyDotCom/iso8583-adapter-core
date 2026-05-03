@@ -5,7 +5,8 @@ import com.byteentropy.iso8583_adapter_core.decoder.Iso8583Decoder;
 import com.byteentropy.iso8583_adapter_core.decoder.MessageFrameDecoder;
 import com.byteentropy.iso8583_adapter_core.handler.Iso8583ServerHandler;
 import com.byteentropy.iso8583_adapter_core.util.IsoUtil;
-import com.byteentropy.iso8583_adapter_core.util.SecurityUtil;
+import com.byteentropy.iso8583_adapter_core.util.MacStrategy;
+import com.byteentropy.iso8583_adapter_core.util.SoftwareMacStrategy;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
@@ -25,6 +26,7 @@ public class Iso8583IntegrationTest {
 
     private static Properties props;
     private static Iso8583ServerHandler sharedHandler;
+    private static MacStrategy testMacStrategy; // Updated to use Strategy interface
 
     @BeforeAll
     static void setup() throws Exception {
@@ -32,6 +34,7 @@ public class Iso8583IntegrationTest {
         props.setProperty("adapter.protocol.mti-binary", "false");
         props.setProperty("adapter.protocol.bitmap-binary", "true");
         props.setProperty("adapter.security.mac-enabled", "true");
+        props.setProperty("adapter.security.use-hsm", "false"); // Use software for testing
         props.setProperty("adapter.security.mac-key", "super-secret-key-12345");
         props.setProperty("adapter.security.mac-algorithm", "HmacSHA256");
         props.setProperty("adapter.security.mac-field", "128");
@@ -43,12 +46,14 @@ public class Iso8583IntegrationTest {
         props.setProperty("adapter.mti.map.0800", "0810");
         props.setProperty("adapter.response.mac-error-code", "A0");
         props.setProperty("adapter.response.system-error-code", "96");
+        props.setProperty("adapter.protocol.bcd-padding", "RIGHT_ZERO");
 
         URL resource = Iso8583IntegrationTest.class.getClassLoader().getResource("iso-schema.json");
         if (resource == null) throw new RuntimeException("Schema not found");
         IsoFieldRegistry.loadSchema(Paths.get(resource.toURI()).toString());
         
         sharedHandler = new Iso8583ServerHandler(props);
+        testMacStrategy = new SoftwareMacStrategy(); // Initialize the pluggable strategy
     }
 
     private EmbeddedChannel createPipeline() {
@@ -82,12 +87,13 @@ public class Iso8583IntegrationTest {
         byte[] rawBody = new byte[body.readableBytes()];
         body.getBytes(0, rawBody);
         
-        // MAC is calculated ONLY on the body (MTI + Bitmap + Fields)
-        String mac = IsoUtil.bytesToHex(SecurityUtil.calculateMac(
+        // UPDATED: Using testMacStrategy instead of deleted SecurityUtil
+        byte[] macRaw = testMacStrategy.calculate(
             rawBody, 
             props.getProperty("adapter.security.mac-key"), 
             props.getProperty("adapter.security.mac-algorithm")
-        ));
+        );
+        String mac = IsoUtil.bytesToHex(macRaw);
 
         ByteBuf frame = Unpooled.buffer();
         frame.writeShort(rawBody.length + 64); 
@@ -122,7 +128,6 @@ public class Iso8583IntegrationTest {
         ByteBuf resp = pollForResponse(channel);
         assertNotNull(resp);
         String resStr = resp.toString(StandardCharsets.US_ASCII);
-        // Accept 96 (Validation Error) OR A0 (MAC Error) since both are valid rejections
         assertTrue(resStr.contains("96") || resStr.contains("A0"), "Expected rejection code 96 or A0. Found: " + resStr);
         resp.release();
     }

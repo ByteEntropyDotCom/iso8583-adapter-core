@@ -51,4 +51,17 @@ public class IsoUtil {
         }
         return sb.toString();
     }
+
+        public static String mask(String data, int prefix, int suffix) {
+        if (data == null || data.length() <= (prefix + suffix)) {
+            return "****"; // Data too short to mask safely
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append(data, 0, prefix);
+        for (int i = 0; i < data.length() - (prefix + suffix); i++) {
+            sb.append("*");
+        }
+        sb.append(data.substring(data.length() - suffix));
+        return sb.toString();
+    }
 }

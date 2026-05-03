@@ -14,9 +14,8 @@ import java.util.stream.Collectors;
  */
 public class IsoBusinessValidator {
     private final Set<String> allowedMtis;
-    private final Set<String> mandatoryFields; // Changed to String to support sub-fields like "48.1"
+    private final Set<String> mandatoryFields;
     
-    // Pre-compile regex to avoid overhead during transaction processing
     private static final Pattern AMOUNT_PATTERN = Pattern.compile("\\d{12}");
 
     public IsoBusinessValidator(String mtis, String fields) {
@@ -32,18 +31,19 @@ public class IsoBusinessValidator {
                   .collect(Collectors.toSet());
     }
 
-    public record ValidationResult(boolean isValid, String responseCode) {}
+    // UPDATED: Added 'reason' field to the record
+    public record ValidationResult(boolean isValid, String responseCode, String reason) {}
 
     public ValidationResult validate(IsoMessage msg) {
         // 1. MTI Check - Response Code 40 (Function Not Supported)
         if (!allowedMtis.contains(msg.mti())) {
-            return new ValidationResult(false, "40");
+            return new ValidationResult(false, "40", "MTI " + msg.mti() + " not allowed");
         }
 
         // 2. Mandatory Fields Check - Response Code 30 (Format Error)
         for (String fieldKey : mandatoryFields) {
             if (!msg.fields().containsKey(fieldKey)) {
-                return new ValidationResult(false, "30");
+                return new ValidationResult(false, "30", "Missing mandatory field: " + fieldKey);
             }
         }
 
@@ -52,10 +52,11 @@ public class IsoBusinessValidator {
         if (amountData != null) {
             String amt = new String(amountData, StandardCharsets.US_ASCII);
             if (!AMOUNT_PATTERN.matcher(amt).matches()) {
-                return new ValidationResult(false, "13");
+                return new ValidationResult(false, "13", "Invalid amount format in Field 4");
             }
         }
 
-        return new ValidationResult(true, "00");
+        // Success Case
+        return new ValidationResult(true, "00", "Success");
     }
 }

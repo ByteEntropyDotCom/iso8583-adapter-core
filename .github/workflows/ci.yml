@@ -44,4 +44,14 @@ jobs:
       - name: Verify Image Build
         run: |
           docker images
-          docker inspect iso8583-adapter:latest | grep "Architecture"
+          docker inspect --format='{{.Architecture}} {{.Os}}' iso8583-adapter:latest
+      
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'iso8583-adapter:latest'
+          format: 'table'
+          exit-code: '1' # This will fail the build if high/critical vulnerabilities are found
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
