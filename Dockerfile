@@ -21,7 +21,7 @@ RUN addgroup -S adaptergroup && adduser -S adapteruser -G adaptergroup
 
 # 4. Configuration: Copy the ISO Schema
 # The hybrid Registry loader will find this in the working directory before checking classpath.
-COPY --chown=adapteruser:adaptergroup iso-schema.json .
+COPY --chown=adapteruser:adaptergroup src/main/resources/iso-schema.json .
 
 # 5. Application: Copy the compiled JAR from the build stage
 COPY --from=build --chown=adapteruser:adaptergroup /app/target/iso8583-adapter-core-*.jar app.jar
