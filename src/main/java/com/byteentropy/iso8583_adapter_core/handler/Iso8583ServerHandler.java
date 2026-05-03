@@ -1,105 +1,166 @@
 package com.byteentropy.iso8583_adapter_core.handler;
 
-import com.byteentropy.iso8583_adapter_core.model.IsoMessage;
-import com.byteentropy.iso8583_adapter_core.model.FieldDefinition;
 import com.byteentropy.iso8583_adapter_core.config.IsoFieldRegistry;
+import com.byteentropy.iso8583_adapter_core.config.MetricsConfig;
+import com.byteentropy.iso8583_adapter_core.model.FieldDefinition;
+import com.byteentropy.iso8583_adapter_core.model.IsoMessage;
+import com.byteentropy.iso8583_adapter_core.service.IsoTransactionService;
 import com.byteentropy.iso8583_adapter_core.util.BitmapUtils;
+import com.byteentropy.iso8583_adapter_core.util.IsoUtil;
+import com.byteentropy.iso8583_adapter_core.util.SecurityUtil;
+import io.micrometer.core.instrument.Timer;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.channel.ChannelHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.TreeSet;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.stream.Collectors;
 
 /**
- * Handles ISO 8583 messages using Java 21 Virtual Threads.
- * Optimized for high-throughput and low-latency financial transactions.
+ * High-performance ISO 8583 Handler.
+ * Supports recursive sub-fields, LLVAR/LLLVAR, and configurable BCD padding.
  */
+@ChannelHandler.Sharable
 public class Iso8583ServerHandler extends SimpleChannelInboundHandler<IsoMessage> {
-    
     private static final Logger logger = LoggerFactory.getLogger(Iso8583ServerHandler.class);
-    
-    // Virtual Thread Executor: Scalable beyond platform thread limits
     private static final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+    
+    private final IsoTransactionService txService;
+    private final Properties props;
+    private final String bcdPaddingStrategy;
 
-    @Override
-    protected void channelRead0(ChannelHandlerContext ctx, IsoMessage msg) {
-        // Offload the processing to a Virtual Thread to keep Netty's EventLoop free
-        executor.submit(() -> {
-            // Allocate pooled buffer from Netty's allocator
-            ByteBuf body = ctx.alloc().buffer(); 
-            try {
-                logger.info("Processing MTI: {}", msg.mti());
-
-                // 1. Transaction Logic: Set Response Code "00" (Approved)
-                // In a real app, this is where you'd call your DB or HSM
-                msg.fields().put(39, "00".getBytes(StandardCharsets.US_ASCII));
-                
-                // MTI Conversion: Request (e.g., 0200) -> Response (e.g., 0210)
-                char[] mtiChars = msg.mti().toCharArray();
-                if (mtiChars.length >= 3) {
-                    mtiChars[2] = (mtiChars[2] == '0') ? '1' : (char)(mtiChars[2] + 1);
-                }
-                String resMti = new String(mtiChars);
-
-                // 2. Build Response Body
-                body.writeCharSequence(resMti, StandardCharsets.US_ASCII);
-                
-                // Fields MUST be encoded in ascending numerical order
-                TreeSet<Integer> sortedFields = new TreeSet<>(msg.fields().keySet());
-                
-                // Generate and write Bitmap (Binary format)
-                byte[] bitmap = BitmapUtils.createBitmap(sortedFields);
-                body.writeBytes(bitmap);
-
-                // Encode Fields
-                for (Integer fId : sortedFields) {
-                    if (fId == 1) continue; // Skip as Bitmap is already written
-                    
-                    byte[] data = msg.fields().get(fId);
-                    FieldDefinition def = IsoFieldRegistry.getDefinition(fId);
-                    
-                    if (def == null) {
-                        logger.warn("Skipping field {}: No definition found in registry", fId);
-                        continue;
-                    }
-
-                    // Handle variable length headers
-                    switch (def.type()) {
-                        case LLVAR -> body.writeCharSequence(String.format("%02d", data.length), StandardCharsets.US_ASCII);
-                        case LLLVAR -> body.writeCharSequence(String.format("%03d", data.length), StandardCharsets.US_ASCII);
-                        case FIXED -> { /* No header needed */ }
-                    }
-                    body.writeBytes(data);
-                }
-
-                // 3. Final Framing: [Length (2 bytes)][Body]
-                ByteBuf responseFrame = ctx.alloc().buffer(body.readableBytes() + 2);
-                responseFrame.writeShort(body.readableBytes());
-                responseFrame.writeBytes(body);
-
-                // Write to wire and flush
-                ctx.writeAndFlush(responseFrame);
-                
-            } catch (Exception e) {
-                logger.error("Error processing transaction {}: ", msg.mti(), e);
-                // In production, send a '96' (System Malfunction) response here if possible
-            } finally {
-                // Manually release the body buffer as it was manually allocated
-                if (body.refCnt() > 0) {
-                    body.release();
-                }
-            }
-        });
+    public Iso8583ServerHandler(Properties props) {
+        this.props = props;
+        this.txService = new IsoTransactionService(props);
+        // Load the strategy from properties: "RIGHT_ZERO" (standard) or "LEFT_F" (legacy)
+        this.bcdPaddingStrategy = props.getProperty("adapter.protocol.bcd-padding", "RIGHT_ZERO");
     }
 
     @Override
-    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        logger.error("Connection exception: {}", cause.getMessage());
-        ctx.close();
+    protected void channelRead0(ChannelHandlerContext ctx, IsoMessage msg) {
+        Timer.Sample sample = Timer.start(MetricsConfig.registry);
+        int timeout = Integer.parseInt(props.getProperty("adapter.timeout.total-threshold-ms", "180"));
+
+        CompletableFuture.runAsync(() -> {
+            String responseCode = txService.process(msg);
+            respond(ctx, msg, responseCode);
+            MetricsConfig.txnCounter.increment();
+        }, executor)
+        .orTimeout(timeout, TimeUnit.MILLISECONDS)
+        .exceptionally(ex -> {
+            logger.error("SLA Violation: {}", ex.getMessage());
+            respond(ctx, msg, props.getProperty("adapter.response.system-error-code", "96"));
+            MetricsConfig.errorCounter.increment();
+            return null;
+        })
+        .whenComplete((res, ex) -> sample.stop(MetricsConfig.txnTimer));
+    }
+
+    private void respond(ChannelHandlerContext ctx, IsoMessage msg, String code) {
+        String respCodeField = props.getProperty("adapter.map.field.response-code", "39");
+        msg.fields().put(respCodeField, code.getBytes(StandardCharsets.US_ASCII));
+        
+        ByteBuf body = ctx.alloc().buffer();
+        try {
+            // 1. MTI
+            String respMti = props.getProperty("adapter.mti.map." + msg.mti(), "0900");
+            body.writeCharSequence(respMti, StandardCharsets.US_ASCII);
+            
+            // 2. Bitmap
+            TreeSet<Integer> activeFields = msg.fields().keySet().stream()
+                    .filter(k -> !k.contains("."))
+                    .map(Integer::parseInt)
+                    .collect(Collectors.toCollection(TreeSet::new));
+            body.writeBytes(BitmapUtils.createBitmap(activeFields));
+
+            // 3. Fields
+            int macField = Integer.parseInt(props.getProperty("adapter.security.mac-field", "128"));
+            for (Integer fId : activeFields) {
+                if (fId == 1 || fId == macField) continue;
+                
+                FieldDefinition def = IsoFieldRegistry.getDefinition(fId);
+                if (def == null) continue;
+
+                byte[] fieldData = def.isContainer() ? 
+                    encodeSubFields(fId, msg.fields(), def.subFields()) : 
+                    msg.fields().get(String.valueOf(fId));
+
+                if (fieldData != null) {
+                    writeField(body, def, fieldData);
+                }
+            }
+
+            // 4. MAC
+            if (Boolean.parseBoolean(props.getProperty("adapter.security.mac-enabled"))) {
+                byte[] dataToSign = new byte[body.readableBytes()];
+                body.getBytes(0, dataToSign);
+                byte[] macRaw = SecurityUtil.calculateMac(dataToSign, 
+                    props.getProperty("adapter.security.mac-key"), 
+                    props.getProperty("adapter.security.mac-algorithm", "HmacSHA256"));
+                body.writeCharSequence(IsoUtil.bytesToHex(macRaw), StandardCharsets.US_ASCII);
+            }
+
+            // 5. Length Header (TCP Framing)
+            ByteBuf frame = ctx.alloc().buffer(body.readableBytes() + 2);
+            frame.writeShort(body.readableBytes());
+            frame.writeBytes(body);
+            ctx.writeAndFlush(frame);
+
+        } catch (Exception e) {
+            logger.error("Response assembly failed", e);
+        } finally {
+            body.release();
+        }
+    }
+
+    private byte[] encodeSubFields(int parentId, Map<String, byte[]> allFields, List<FieldDefinition> subDefs) {
+        ByteBuf subBody = Unpooled.buffer();
+        try {
+            for (FieldDefinition subDef : subDefs) {
+                byte[] data = allFields.get(parentId + "." + subDef.id());
+                if (data != null) {
+                    writeField(subBody, subDef, data);
+                }
+            }
+            byte[] result = new byte[subBody.readableBytes()];
+            subBody.readBytes(result);
+            return result;
+        } finally {
+            subBody.release();
+        }
+    }
+
+    private void writeField(ByteBuf buf, FieldDefinition def, byte[] data) {
+        // Calculate logic length: BCD stores 2 digits per byte
+        int logicLen = (def.encoding() == FieldDefinition.Encoding.BCD) ? data.length * 2 : data.length;
+        
+        switch (def.type()) {
+            case LLVAR -> writeLength(buf, logicLen, 2, def.encoding());
+            case LLLVAR -> writeLength(buf, logicLen, 3, def.encoding());
+            case TLV -> {
+                writeLength(buf, def.id(), 3, FieldDefinition.Encoding.ASCII); // Tag
+                writeLength(buf, logicLen, 3, FieldDefinition.Encoding.ASCII); // Length
+            }
+            case FIXED -> {} 
+        }
+        buf.writeBytes(data);
+    }
+
+    private void writeLength(ByteBuf buf, int len, int width, FieldDefinition.Encoding encoding) {
+        String format = "%0" + width + "d";
+        String lenStr = String.format(format, len);
+        
+        if (encoding == FieldDefinition.Encoding.BCD) {
+            // Uses the strategy-aware BCD conversion
+            buf.writeBytes(IsoUtil.stringToBcd(lenStr, bcdPaddingStrategy));
+        } else {
+            buf.writeCharSequence(lenStr, StandardCharsets.US_ASCII);
+        }
     }
 }

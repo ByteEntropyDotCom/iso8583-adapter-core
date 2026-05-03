@@ -1,0 +1,20 @@
+[
+  {"id": 2,  "type": "LLVAR", "encoding": "ASCII", "length": 19,  "name": "PAN"},
+  {"id": 3,  "type": "FIXED", "encoding": "ASCII", "length": 6,   "name": "Processing Code"},
+  {"id": 7,  "type": "FIXED", "encoding": "ASCII", "length": 10,  "name": "Transmission Date"},
+  {"id": 11, "type": "FIXED", "encoding": "ASCII", "length": 6,   "name": "STAN"},
+  {"id": 39, "type": "FIXED", "encoding": "ASCII", "length": 2,   "name": "Response Code"},
+  {"id": 41, "type": "FIXED", "encoding": "ASCII", "length": 8,   "name": "Terminal ID"},
+  {
+    "id": 48, 
+    "type": "LLLVAR", 
+    "encoding": "ASCII", 
+    "length": 999, 
+    "name": "Additional Data",
+    "subFields": [
+      {"id": 1, "type": "FIXED", "encoding": "ASCII", "length": 3, "name": "CVV2 Check"},
+      {"id": 2, "type": "LLVAR", "encoding": "ASCII", "length": 20, "name": "Merchant Info"}
+    ]
+  },
+  {"id": 128, "type": "FIXED", "encoding": "ASCII", "length": 64, "name": "MAC"}
+]

@@ -2,32 +2,44 @@
 FROM maven:3.9.6-eclipse-temurin-21-alpine AS build
 WORKDIR /app
 
-# Copy only pom.xml first to leverage Docker layer caching for dependencies
+# 1. Cache dependencies (Optimization: only re-runs if pom.xml changes)
 COPY pom.xml .
 RUN mvn dependency:go-offline -B
 
-# Copy source code and build the application
+# 2. Build the application
 COPY src ./src
-RUN mvn clean package -DskipTests
+# We skip tests here because they were verified in the CI pipeline; 
+# Parallel threads (-T 1C) speed up compilation on multi-core systems.
+RUN mvn clean package -DskipTests -T 1C
 
 # --- Stage 2: Runtime Stage ---
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
-# Create a non-root user for security
+# 3. Security: Create a non-privileged user to run the adapter
 RUN addgroup -S adaptergroup && adduser -S adapteruser -G adaptergroup
+
+# 4. Configuration: Copy the ISO Schema
+# The hybrid Registry loader will find this in the working directory before checking classpath.
+COPY --chown=adapteruser:adaptergroup iso-schema.json .
+
+# 5. Application: Copy the compiled JAR from the build stage
+COPY --from=build --chown=adapteruser:adaptergroup /app/target/iso8583-adapter-core-*.jar app.jar
+
+# 6. Environment & Permissions
 USER adapteruser
 
-# Copy the executable jar from the build stage
-# Note: Ensure the 'finalName' in your pom.xml matches or use a wildcard
-COPY --from=build /app/target/iso8583-adapter-core-*.jar app.jar
-
-# Standard ISO 8583 port (example)
+# ISO 8583 Engine default port
 EXPOSE 8080
 
-# Use optimized JVM settings for container environments
+# 7. Execution: ENTRYPOINT with optimized JVM flags for containers
+# - UseContainerSupport: Ensures JVM respects Docker memory limits
+# - MaxRAMPercentage: Allocates 75% of container memory to the JVM heap
+# - ExitOnOutOfMemoryError: Forces container restart on heap exhaustion (fail-fast)
 ENTRYPOINT ["java", \
             "-XX:+UseContainerSupport", \
             "-XX:MaxRAMPercentage=75.0", \
+            "-XX:+ExitOnOutOfMemoryError", \
             "-Djava.security.egd=file:/dev/./urandom", \
+            "-Dfile.encoding=UTF-8", \
             "-jar", "app.jar"]

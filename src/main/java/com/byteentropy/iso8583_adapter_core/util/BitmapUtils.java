@@ -1,40 +1,26 @@
 package com.byteentropy.iso8583_adapter_core.util;
 
-import org.apache.commons.codec.binary.Hex;
-import java.util.Set;
+import java.util.TreeSet;
 
 public class BitmapUtils {
-    
-    public static byte[] createBitmap(Set<Integer> activeFields) {
+    public static byte[] createBitmap(TreeSet<Integer> activeFields) {
+        // If any field > 64 exists, we MUST have 16 bytes (128 bits)
         boolean hasSecondary = activeFields.stream().anyMatch(f -> f > 64);
         byte[] bitmap = new byte[hasSecondary ? 16 : 8];
 
-        if (hasSecondary) {
-            bitmap[0] |= 0x80;
-        }
-
         for (Integer field : activeFields) {
-            if (field <= 1 || field > 128) continue; 
+            if (field == 1) continue; // Bit 1 is the secondary bitmap indicator
+            if (field > 128) continue; 
             
-            int offset = field - 1;
-            int byteIdx = offset / 8;
-            int bitIdx = 7 - (offset % 8);
-            bitmap[byteIdx] |= (1 << bitIdx);
+            int byteIndex = (field - 1) / 8;
+            int bitIndex = (field - 1) % 8;
+            bitmap[byteIndex] |= (0x80 >> bitIndex);
         }
+
+        if (hasSecondary) {
+            bitmap[0] |= 0x80; // Explicitly set Bit 1
+        }
+        
         return bitmap;
-    }
-
-    /**
-     * Converts a binary bitmap to a Hex-ASCII string (e.g. for specific protocols or logging)
-     */
-    public static String bytesToHex(byte[] bytes) {
-        return Hex.encodeHexString(bytes).toUpperCase();
-    }
-
-    /**
-     * Converts a Hex-ASCII string back to binary bytes
-     */
-    public static byte[] hexToBytes(String hex) throws Exception {
-        return Hex.decodeHex(hex);
     }
 }

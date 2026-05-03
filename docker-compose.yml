@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  iso-adapter:
+    env_file:
+     - .env
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: byteentropy/iso8583-adapter:latest
+    container_name: iso8583-adapter-service
+    
+    # Port mapping: [Host Port]:[Container Port]
+    # Standard ISO 8583 listening port
+    ports:
+      - "8080:8080"
+    
+    environment:
+      # Pass properties as environment variables if your app supports it
+      - JAVA_OPTS=-XX:MaxRAMPercentage=75.0 -Dfile.encoding=UTF-8
+      # Example: Protocol configuration overrides
+      - ADAPTER_PROTOCOL_MTI_BINARY=false
+      - ADAPTER_PROTOCOL_BITMAP_BINARY=true
+      - ADAPTER_SECURITY_MAC_LENGTH=0
+      
+    # Resource constraints to prevent a single service from consuming the host
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+
+    # Reliability: Restart the service unless explicitly stopped
+    restart: unless-stopped
+
+    # Healthcheck to ensure the Netty server is actually accepting connections
+    # This uses a simple shell command to check if port 8080 is open
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 8080 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Logging configuration to prevent disk exhaustion
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  default:
+    name: iso8583-network
+    driver: bridge

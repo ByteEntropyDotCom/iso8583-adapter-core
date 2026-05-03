@@ -1,88 +1,96 @@
 # ISO 8583 Adapter Core
-A high-performance, asynchronous ISO 8583 message decoder built on Java 21 and Netty. This adapter is designed for low-latency financial transaction processing, providing a seamless bridge between raw network byte streams and structured Java domain objects.
+
+A high-performance, asynchronous ISO 8583 message engine built on Java 21 and Netty. This adapter is designed for ultra-low latency financial transaction processing, providing a seamless bridge between raw network byte streams and structured Java domain objects.
 
 ## 🚀 Features
-### Asynchronous Processing: 
-Built on Netty's event-driven framework for high-throughput capability.
 
-### Modern Java: 
-Leverages Java 21 features like enhanced switch expressions and Pattern Matching.
+* Asynchronous Processing: Built on Netty's event-driven framework for high-throughput capability.
 
-### Robust Decoding:
-* Supports Primary and Secondary Bitmaps (128 fields).
-* Handles FIXED, LLVAR, and LLLVAR field types.
-* Strict validation of length headers and message structure.
+* Modern Java: Fully optimized for Java 21, leveraging Virtual Threads and Pattern Matching.
+* Recursive Decoding: Supports nested sub-fields (e.g., Field 48.1, 48.2) through a configurable JSON schema.
 
-### Dockerized: 
-Multi-stage build for a minimal, production-ready JRE footprint.
+* Robust Field Support:
+  * Primary and Secondary Bitmaps (up to 128 fields).
+  * FIXED, LLVAR, and LLLVAR types.
+  * Configurable ASCII/BCD encoding and padding (RIGHT_ZERO/LEFT_F).
 
-### Comprehensive Testing: 
-includes unit tests and full-pipeline integration tests using EmbeddedChannel.
+* Cloud-Native & Secure:
+  * Dockerized: Multi-stage Alpine build for a minimal footprint (~150MB).
+  * Secret Management: Environment variable injection for MAC keys and sensitive  
+    credentials.
+  * Non-Root Execution: Optimized for production security.
+
 
 ## 🛠 Tech Stack
-* Runtime: Java 21 (Eclipse Temurin)
-* Network Engine: Netty 4.1.x
-* Build Tool: Maven 3.9+
-* Containerization: Docker (Multi-stage Alpine build)
-* Testing: JUnit 5, AssertJ
+
+Component	Technology
+Runtime	Java 21 (Eclipse Temurin)
+Network Engine	Netty 4.1.x
+JSON Handling	Jackson (Schema Registry)
+Build Tool	Maven 3.9+
+Containerization	Docker & Docker Compose
+CI/CD	GitHub Actions (Build & Docker)
 
 
 ## 📦 Getting Started
 
-### Prerequisites
+1. Prerequisites
+   * JDK 21+
+   * Maven 3.9+
+   * Docker & Docker Compose
 
-* JDK 21
-* Maven 3.9+
-* Docker (Optional)
+2. Build and Test
+   Run the full suite of integration tests, including BCD length validation and recursive  
+   sub-field decoding:
 
-### Build and Test
-To compile the project and run the full suite of integration tests:
+   ``
+   mvn clean verify
+   ``
 
+ 3. Local Deployment
+
+The project includes a docker-compose.yml for rapid deployment.
+
+Configure Environment: Create a .env file (ignored by git):
+
+```env
+   MAC_KEY=your-secure-production-key
+   ADAPTER_PORT=8080
+``` 
+
+4. Launch:
+
+```bash
+   docker-compose up --build -d
 ```
-Bash
-mvn clean install
-```
 
+## 🔧 Configuration
 
-### Docker Deployment
-Build the optimized production image (approx. 150MB):
+The engine behavior is governed by application.properties and a central iso-schema.json.
 
-```
-Bash
-docker build -t iso8583-adapter .
-docker run -p 8080:8080 iso8583-adapter
-```
+Schema Definition (iso-schema.json)
 
-## 🔧 Usage Example
-The Iso8583Decoder can be easily plugged into any Netty ChannelPipeline.
+Fields are defined with specific encodings to ensure the decoder slices the byte stream correctly:
 
-```
-Java
-public void initChannel(SocketChannel ch) {
-    ChannelPipeline p = ch.pipeline();
-    // Add frame decoder (e.g., LengthFieldBasedFrameDecoder)
-    p.addLast(new Iso8583Decoder());
-    p.addLast(new TransactionHandler()); // Your business logic here
+```json
+
+{
+  "id": 2,
+  "name": "PAN",
+  "type": "LLVAR",
+  "encoding": "ASCII",
+  "length": 19
 }
 ```
 
-
-### Decoded Output Structure
-
-When a raw ISO 8583 packet is received, it is transformed into an IsoMessage object:
-
-* MTI: e.g., 0200 (Financial Transaction Request)
-* Bitmap: Automatically parsed to identify active fields.
-* Fields: Accessible via a thread-safe map (e.g., message.fields().get(48)).
-
-## 🧪 Testing Strategy
+ ## 🧪 Testing Strategy
 The project employs a "Shift-Left" testing approach:
 
-### Unit Tests: 
-Validate individual field parsing and registry logic.
-
-### Integration Tests: 
-Use Netty's EmbeddedChannel to simulate real-world hex-to-object pipeline flows, including error handling for malformed data and truncated packets.
-
+ * Unit Tests: Validate individual field parsing and Registry fallback logic.
+ * Pipeline Integration: Uses Netty's EmbeddedChannel to simulate real-world hex-to-object   
+   flows, verifying MTI mapping and Bitmap parsing.
+ * CI/CD: GitHub Actions automatically verify that every PR maintains a valid Docker build  
+   and passing test suite.
+ 
 ## 📄 License
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License — see the LICENSE file for details.

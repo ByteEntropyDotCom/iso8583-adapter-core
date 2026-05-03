@@ -1,4 +1,4 @@
-package com.byteentropy.iso8583_adapter;
+package com.byteentropy.iso8583_adapter_core;
 
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
