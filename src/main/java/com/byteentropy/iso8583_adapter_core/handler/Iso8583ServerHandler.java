@@ -106,7 +106,10 @@ public class Iso8583ServerHandler extends SimpleChannelInboundHandler<IsoMessage
             }
 
             // 4. MAC
-            if (Boolean.parseBoolean(props.getProperty("adapter.security.mac-enabled"))) {
+            boolean macEnabled = Boolean.parseBoolean(props.getProperty("adapter.security.mac-enabled"));
+            boolean isNetworkResponse = respMti.startsWith("08");
+
+            if (macEnabled && !isNetworkResponse) {
                 byte[] dataToSign = new byte[body.readableBytes()];
                 body.getBytes(0, dataToSign);
                 byte[] macRaw = SecurityUtil.calculateMac(dataToSign, 
